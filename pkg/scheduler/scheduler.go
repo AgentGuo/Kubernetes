@@ -62,6 +62,8 @@ const (
 	durationToExpireAssumedPod = 15 * time.Minute
 )
 
+var schedulerID int
+
 // Scheduler watches for new unscheduled pods. It attempts to find
 // nodes that they fit on and writes bindings back to the api server.
 type Scheduler struct {
@@ -292,6 +294,10 @@ func unionedGVKs(m map[framework.ClusterEvent]sets.String) map[framework.GVK]fra
 
 // Run begins watching and scheduling. It starts scheduling and blocked until the context is done.
 func (sched *Scheduler) Run(ctx context.Context) {
+	schedulerID = registerScheduler()
+	if schedulerID == -1 {
+		return
+	}
 	sched.SchedulingQueue.Run()
 	wait.UntilWithContext(ctx, sched.scheduleOne, 0)
 	sched.SchedulingQueue.Close()
@@ -425,6 +431,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		return
 	}
 	pod := podInfo.Pod
+	podID, ok := runSchedulerRequest(pod.Name, pod.Namespace, schedulerID)
+	if !ok {
+		return
+	}
 	fwk, err := sched.frameworkForPod(pod)
 	if err != nil {
 		// This shouldn't happen, because we only accept for scheduling the pods
@@ -627,6 +637,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 				// Unlike the logic in scheduling cycle, we don't bother deleting the entries
 				// as `podsToActivate.Map` is no longer consumed.
 			}
+			runFinishSchedule(podID)
 		}
 	}()
 }
