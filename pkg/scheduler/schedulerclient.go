@@ -3,13 +3,15 @@ package scheduler
 import (
 	"crypto/md5"
 	"fmt"
-	"k8s.io/kubernetes/pkg/schedulermain"
 	"k8s.io/kubernetes/pkg/schedulermain/apis"
+	"k8s.io/kubernetes/pkg/schedulermain/podschedule"
 	"log"
 	"math/rand"
 	"net/rpc"
 	"time"
 )
+
+const HeartBeatInterval = 2 * time.Second
 
 func call(rpcName string, args interface{}, reply interface{}) error {
 	client, err := rpc.Dial("tcp", "localhost:12345")
@@ -56,17 +58,30 @@ func runSchedulerRequest(podName string, namespace string, schedulerID int) (int
 		return -1, false
 	}
 	fmt.Println("isPermitted:", reply.IsPermitted)
-	return podID, true
+	return podID, reply.IsPermitted
 }
 
 func runFinishSchedule(podID int) {
 	args := apis.UpdatePodStatusArgs{
 		PodID:  podID,
-		Status: schedulermain.PodFinished,
+		Status: podschedule.PodFinished,
 	}
 	reply := apis.UpdatePodStatusReply{}
 	err := call("UpdatePodStatus", args, &reply)
 	if err != nil {
 		return
+	}
+}
+
+func runHeartBeat(schedulerID int) {
+	for {
+		select {
+		case <-time.After(HeartBeatInterval):
+			reply := apis.HeartBeatReply{}
+			err := call("HeartBeat", apis.HeartBeatArgs{SchedulerID: schedulerID}, &reply)
+			if err != nil {
+				return
+			}
+		}
 	}
 }

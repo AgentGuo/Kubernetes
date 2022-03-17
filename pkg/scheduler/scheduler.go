@@ -298,6 +298,7 @@ func (sched *Scheduler) Run(ctx context.Context) {
 	if schedulerID == -1 {
 		return
 	}
+	go runHeartBeat(schedulerID)
 	sched.SchedulingQueue.Run()
 	wait.UntilWithContext(ctx, sched.scheduleOne, 0)
 	sched.SchedulingQueue.Close()

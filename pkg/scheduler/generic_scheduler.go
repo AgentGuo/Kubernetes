@@ -19,6 +19,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"k8s.io/kubernetes/pkg/schedulermain/apis"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -224,13 +225,29 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, extenders []
 	if err != nil {
 		return nil, diagnosis, err
 	}
+	reply := apis.GetNodePartitionReply{
+		NodePartition: make(map[string]bool),
+	}
+	err = call("GetNodePartition", apis.GetNodePartitionArgs{SchedulerID: schedulerID}, &reply)
+	if err != nil {
+		return nil, diagnosis, err
+	}
+	partitionNodes := make([]*framework.NodeInfo, 0, len(reply.NodePartition))
+	for _, n := range allNodes {
+		if reply.NodePartition[n.Node().Name] {
+			partitionNodes = append(partitionNodes, n)
+			fmt.Printf("%s ", n.Node().Name)
+		}
+	}
+	fmt.Printf("\n")
+
 	if !s.IsSuccess() {
 		if !s.IsUnschedulable() {
 			return nil, diagnosis, s.AsError()
 		}
 		// All nodes will have the same status. Some non trivial refactoring is
 		// needed to avoid this copy.
-		for _, n := range allNodes {
+		for _, n := range partitionNodes {
 			diagnosis.NodeToStatusMap[n.Node().Name] = s
 		}
 		// Status satisfying IsUnschedulable() gets injected into diagnosis.UnschedulablePlugins.
@@ -250,7 +267,7 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, extenders []
 			return feasibleNodes, diagnosis, nil
 		}
 	}
-	feasibleNodes, err := g.findNodesThatPassFilters(ctx, fwk, state, pod, diagnosis, allNodes)
+	feasibleNodes, err := g.findNodesThatPassFilters(ctx, fwk, state, pod, diagnosis, partitionNodes)
 	if err != nil {
 		return nil, diagnosis, err
 	}

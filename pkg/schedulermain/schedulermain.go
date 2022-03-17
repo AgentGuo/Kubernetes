@@ -1,126 +1,26 @@
 package schedulermain
 
 import (
+	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/schedulermain/apis"
+	"k8s.io/kubernetes/pkg/schedulermain/podschedule"
+	"k8s.io/kubernetes/pkg/schedulermain/schedulers"
+	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 	"log"
-	"math/rand"
 	"net"
 	"net/rpc"
-	"sync"
+	"path/filepath"
 	"time"
 )
 
-const (
-	PodScheduling = 1
-	PodFailed     = 2
-	PodFinished   = 3
-)
-const (
-	ScheduleTimeoutInterval = 5 * time.Second
-	PodExpire               = 3 * time.Second
-)
-
 type SchedulerMain struct {
-	SchedulerMap map[int]bool
-	PodMap       map[int]*PodInfo
-	M            sync.Mutex
-}
-
-type PodInfo struct {
-	PodID       int
-	SchedulerID int
-	Status      int
-	startTime   time.Time
-}
-
-func (s *SchedulerMain) RegisterScheduler(args apis.RegisterArgs, reply *apis.RegisterReply) error {
-	var schedulerID int
-	for {
-		schedulerID = rand.Int()
-		if _, ok := s.SchedulerMap[schedulerID]; !ok {
-			break
-		}
-	}
-	s.SchedulerMap[schedulerID] = true
-	*reply = apis.RegisterReply{
-		SchedulerID: schedulerID,
-	}
-	log.Printf("scheduler:%d have registered", schedulerID)
-	return nil
-}
-
-func (s *SchedulerMain) RequestSchedule(args apis.RequestScheduleArgs, reply *apis.RequestScheduleReply) error {
-	s.M.Lock()
-	defer s.M.Unlock()
-	if info, ok := s.PodMap[args.PodID]; ok { // pod在调度列表中
-		if info.SchedulerID == args.SchedulerID { // 已分配，直接返回
-			return permitSchedule(reply, true, nil)
-		}
-		if info.Status == PodScheduling { // Pod正在被调度
-			if time.Now().Sub(info.startTime) > ScheduleTimeoutInterval { // 超时 重新调度
-				return permitSchedule(reply, true, nil)
-			} else { // 未超时
-				return permitSchedule(reply, false, nil)
-			}
-		} else if info.Status == PodFinished { // pod调度完成
-			return permitSchedule(reply, false, nil)
-		} else if info.Status == PodFailed { // pod调度失败
-			return permitSchedule(reply, true, nil)
-		} else {
-			return permitSchedule(reply, false, nil)
-		}
-	} else { // pod不在调度列表中
-		s.PodMap[args.PodID] = &PodInfo{
-			PodID:       args.PodID,
-			SchedulerID: args.SchedulerID,
-			Status:      PodScheduling,
-			startTime:   time.Now(),
-		}
-		return permitSchedule(reply, true, nil)
-	}
-}
-
-func (s *SchedulerMain) UpdatePodStatus(args apis.UpdatePodStatusArgs, reply *apis.UpdatePodStatusReply) error {
-	s.M.Lock()
-	defer s.M.Unlock()
-	if info, ok := s.PodMap[args.PodID]; ok {
-		(*info).Status = args.Status
-		(*info).startTime = time.Now()
-	}
-	printPod(s.PodMap)
-	return nil
-}
-
-func (s *SchedulerMain) DeletePod() {
-	for {
-		select {
-		case <-time.After(3 * time.Second):
-			s.M.Lock()
-			for k, v := range s.PodMap {
-				if v.Status == PodFinished && time.Now().Sub(v.startTime) > PodExpire { // 删除过期的调度完的pod
-					delete(s.PodMap, k)
-				}
-			}
-			s.M.Unlock()
-		}
-	}
-}
-
-func printPod(info map[int]*PodInfo) {
-	if info == nil {
-		return
-	}
-	for k, v := range info {
-		log.Println("podID:", k, "status:", v.Status)
-	}
-}
-
-func permitSchedule(reply *apis.RequestScheduleReply, b bool, err error) error {
-	*reply = apis.RequestScheduleReply{
-		IsPermitted: b,
-	}
-	return err
+	NodeMetricsClientSet *metricsv.Clientset
+	schedulers.Schedulers
+	podschedule.PodSchedule
 }
 
 func (s *SchedulerMain) server(port int) {
@@ -145,18 +45,97 @@ func (s *SchedulerMain) server(port int) {
 		}
 	}()
 	go s.DeletePod()
+	go func() {
+		for {
+			s.updateSchedulerWeight()
+			time.Sleep(3 * time.Second)
+		}
+	}()
 }
 
 func NewSchedulerMain() SchedulerMain {
 	return SchedulerMain{
-		SchedulerMap: make(map[int]bool),
-		PodMap:       make(map[int]*PodInfo),
-		M:            sync.Mutex{},
+		NodeMetricsClientSet: NewNodeMetricsClientSet(),
+		Schedulers:           schedulers.NewSchedulers(),
+		PodSchedule:          podschedule.NewPodSchedule(),
 	}
+}
+
+func NewNodeMetricsClientSet() *metricsv.Clientset {
+	kubeconfig := filepath.Join(schedulers.HomeDir(), ".kube", "config")
+	// uses the current context in kubeconfig
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		panic(err.Error())
+	}
+	metricsClientSet, err := metricsv.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+	return metricsClientSet
+}
+
+type nodeResource struct {
+	cpu, memory float64
+}
+
+func (s *SchedulerMain) updateSchedulerWeight() {
+	metricsNodes, err := s.NodeMetricsClientSet.MetricsV1beta1().NodeMetricses().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+	nodesResource := make(map[string]nodeResource)
+	cpuSum := resource.Quantity{}
+	memorySum := resource.Quantity{}
+	for _, node := range metricsNodes.Items {
+		node2, err := s.NodeLister.Get(node.Name)
+		if err != nil {
+			panic(err.Error())
+		}
+		//fmt.Printf("%s [usage]: cpu:%s, memory:%s, storge:%s pod:%s \n",
+		//	node.Name,
+		//	node.Usage.Cpu(),
+		//	node.Usage.Memory(),
+		//	node.Usage.Storage(),
+		//	node.Usage.Pods())
+		//fmt.Printf("  [allocatable]: cpu:%s, memory:%s, storge:%s pod:%s \n",
+		//	node2.Status.Allocatable.Cpu(),
+		//	node2.Status.Allocatable.Memory(),
+		//	node2.Status.Allocatable.Storage(),
+		//	node2.Status.Allocatable.Pods())
+		cpu := resource.Quantity{}
+		cpu.Add(*(node2.Status.Allocatable.Cpu()))
+		cpu.Sub(*(node.Usage.Cpu()))
+		cpuSum.Add(cpu)
+
+		memory := resource.Quantity{}
+		memory.Add(*(node2.Status.Allocatable.Memory()))
+		memory.Sub(*(node.Usage.Memory()))
+		memorySum.Add(memory)
+		nodesResource[node.Name] = nodeResource{
+			cpu:    float64(cpu.MilliValue()),
+			memory: float64(memory.Value()),
+		}
+	}
+	s.PodRWLock.Lock()
+	s.SchedulerRWLock.RLock()
+	s.SchedulerWeight = make(map[int]float64)
+	for id, nodes := range s.SchedulerPartition {
+		s.SchedulerWeight[id] = 0
+		for _, n := range nodes {
+			s.SchedulerWeight[id] += (nodesResource[n].cpu/float64(cpuSum.MilliValue()) +
+				nodesResource[n].memory/float64(memorySum.Value())) / 2
+		}
+	}
+	fmt.Printf("%v\n", s.SchedulerWeight)
+	s.SchedulerRWLock.RUnlock()
+	s.PodRWLock.Unlock()
+	//fmt.Printf("%v\n", nodesResource)
 }
 
 func RunSchedulerMain(port int) {
 	s := NewSchedulerMain()
+	s.InitInformer()
 	s.server(port)
 	fmt.Println("[enter \"q\" or \"quit\" to stop]")
 	input := ""

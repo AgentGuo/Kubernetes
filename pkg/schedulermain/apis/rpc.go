@@ -28,10 +28,27 @@ type UpdatePodStatusArgs struct {
 type UpdatePodStatusReply struct {
 }
 
+type HeartBeatArgs struct {
+	SchedulerID int
+}
+
+type HeartBeatReply struct {
+}
+
+type GetNodePartitionArgs struct {
+	SchedulerID int
+}
+
+type GetNodePartitionReply struct {
+	NodePartition map[string]bool
+}
+
 type SchedulerMainService interface {
 	RegisterScheduler(args RegisterArgs, reply *RegisterReply) error
 	RequestSchedule(args RequestScheduleArgs, reply *RequestScheduleReply) error
 	UpdatePodStatus(args UpdatePodStatusArgs, reply *UpdatePodStatusReply) error
+	HeartBeat(args HeartBeatArgs, reply *HeartBeatReply) error
+	GetNodePartition(args GetNodePartitionArgs, reply *GetNodePartitionReply) error
 }
 
 func RegisterService(service SchedulerMainService) error {
