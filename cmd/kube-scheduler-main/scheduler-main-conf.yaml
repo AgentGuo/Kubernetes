@@ -1,0 +1,8 @@
+schedulerMainName: schedulermain
+port: 12345
+partition:
+  p1:
+  - k8s-master01
+  p2:
+  - k8s-node01
+V: 4

@@ -1,7 +1,6 @@
 package schedulers
 
 import (
-	"flag"
 	"fmt"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -10,12 +9,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	"log"
+	"k8s.io/kubernetes/pkg/schedulermain/utils"
 	"os"
 	"path/filepath"
 	"time"
 )
 
+// HomeDir 获取home目录
 func HomeDir() string {
 	if h := os.Getenv("HOME"); h != "" {
 		return h
@@ -23,16 +23,10 @@ func HomeDir() string {
 	return os.Getenv("USERPROFILE") // windows
 }
 
+// InitInformer 初始化informer
 func (s *Schedulers) InitInformer() {
-	var kubeconfig *string
-	if home := HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
-	// uses the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	kubeConfig := filepath.Join(HomeDir(), ".kube", "config")
+	config, err := clientcmd.BuildConfigFromFlags("", kubeConfig)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -69,7 +63,16 @@ func (s *Schedulers) InitInformer() {
 			s.NodeMap[node.Name] = true
 		}
 	}
-	fmt.Println(s.NodeMap)
+}
+
+func getNodeListString(nodeMap map[string]bool) string {
+	nodeString := "{"
+	for node, _ := range nodeMap {
+		nodeString += node + ","
+	}
+	nodeString = nodeString[:len(nodeString)-1]
+	nodeString += "}"
+	return nodeString
 }
 
 func (s *Schedulers) addNode(obj interface{}) { // 增加node
@@ -78,9 +81,9 @@ func (s *Schedulers) addNode(obj interface{}) { // 增加node
 		s.SchedulerRWLock.Lock()
 		defer s.SchedulerRWLock.Unlock()
 		s.NodeMap[node.Name] = true
-		s.UpdateScheduler()
-		log.Printf("add node:%s\n", node.Name)
-		log.Printf("node list:%v\n", s.NodeMap)
+		utils.LogV(1, fmt.Sprintf("[add node] add node %s, node list:%s",
+			node.Name, getNodeListString(s.NodeMap)))
+		s.UpdateSchedulerPartition()
 	}
 }
 
@@ -99,9 +102,9 @@ func (s *Schedulers) updateNode(oldObj interface{}, newObj interface{}) { // 更
 	if newNode.Status.Conditions[len(newNode.Status.Conditions)-1].Type == v1.NodeReady {
 		s.NodeMap[newNode.Name] = true
 	}
-	s.UpdateScheduler()
-	log.Printf("node update old node:%s, new node:%s\n", oldNode.Name, newNode.Name)
-	log.Printf("node list:%v\n", s.NodeMap)
+	utils.LogV(1, fmt.Sprintf("[update node] old node:%s, new node:%s, node list:%s",
+		oldNode.Name, newNode.Name, getNodeListString(s.NodeMap)))
+	s.UpdateSchedulerPartition()
 }
 
 func (s *Schedulers) deleteNode(obj interface{}) { // 删除node
@@ -110,9 +113,9 @@ func (s *Schedulers) deleteNode(obj interface{}) { // 删除node
 		s.SchedulerRWLock.Lock()
 		defer s.SchedulerRWLock.Unlock()
 		delete(s.NodeMap, node.Name)
-		s.UpdateScheduler()
-		log.Printf("delete node:%s\n", node.Name)
-		log.Printf("node list:%v\n", s.NodeMap)
+		utils.LogV(1, fmt.Sprintf("[delete node] delete node %s, node list:%s",
+			node.Name, getNodeListString(s.NodeMap)))
+		s.UpdateSchedulerPartition()
 	}
 }
 

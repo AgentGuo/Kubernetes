@@ -8,7 +8,8 @@ type RegisterArgs struct {
 }
 
 type RegisterReply struct {
-	SchedulerID int
+	SchedulerID       int
+	SchedulePartition string
 }
 
 type RequestScheduleArgs struct {
@@ -43,14 +44,21 @@ type GetNodePartitionReply struct {
 	NodePartition map[string]bool
 }
 
+// SchedulerMainService rpc接口定义
 type SchedulerMainService interface {
+	// RegisterScheduler scheduler worker节点注册rpc
 	RegisterScheduler(args RegisterArgs, reply *RegisterReply) error
+	// RequestSchedule 请求调度pod rpc
 	RequestSchedule(args RequestScheduleArgs, reply *RequestScheduleReply) error
+	// UpdatePodStatus 更新pod状态rpc
 	UpdatePodStatus(args UpdatePodStatusArgs, reply *UpdatePodStatusReply) error
+	// HeartBeat scheduler worker心跳rpc
 	HeartBeat(args HeartBeatArgs, reply *HeartBeatReply) error
+	// GetNodePartition 获得当前分区节点rpc
 	GetNodePartition(args GetNodePartitionArgs, reply *GetNodePartitionReply) error
 }
 
+// RegisterService 注册rpc
 func RegisterService(service SchedulerMainService) error {
 	return rpc.RegisterName(SchedulerMainName, service)
 }

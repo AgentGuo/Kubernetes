@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-scheduler-1
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-scheduler
+    - --config=/root/my-config-no-leaderelection.yaml
+    - --secure-port=10260
+    - --v=4
+    image: agentguo/kube-scheduler-40msdelay:1.0.0
+    imagePullPolicy: IfNotPresent
+    name: kube-scheduler-1
+    resources:
+      requests:
+        cpu: 100m
+    volumeMounts:
+    - mountPath: /etc/kubernetes/scheduler.conf
+      name: kubeconfig
+      readOnly: true
+    - mountPath: /root/my-config-no-leaderelection.yaml
+      name: kube-scheduler-config
+      readOnly: true
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/scheduler.conf
+      type: FileOrCreate
+    name: kubeconfig
+  - hostPath:
+      path: /root/config/my-config-no-leaderelection.yaml
+      type: FileOrCreate
+    name: kube-scheduler-config
+  nodeName: k8s-master01
+  tolerations:
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-scheduler-2
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-scheduler
+    - --config=/root/my-config-no-leaderelection.yaml
+    - --secure-port=10261
+    - --v=4
+    image: agentguo/kube-scheduler-40msdelay:1.0.0
+    imagePullPolicy: IfNotPresent
+    name: kube-scheduler-2
+    resources:
+      requests:
+        cpu: 100m
+    volumeMounts:
+    - mountPath: /etc/kubernetes/scheduler.conf
+      name: kubeconfig
+      readOnly: true
+    - mountPath: /root/my-config-no-leaderelection.yaml
+      name: kube-scheduler-config
+      readOnly: true
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/scheduler.conf
+      type: FileOrCreate
+    name: kubeconfig
+  - hostPath:
+      path: /root/config/my-config-no-leaderelection.yaml
+      type: FileOrCreate
+    name: kube-scheduler-config
+  nodeName: k8s-master01
+  tolerations:
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-scheduler-3
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-scheduler
+    - --config=/root/my-config-no-leaderelection.yaml
+    - --secure-port=10262
+    - --v=4
+    image: agentguo/kube-scheduler-40msdelay:1.0.0
+    imagePullPolicy: IfNotPresent
+    name: kube-scheduler-3
+    resources:
+      requests:
+        cpu: 100m
+    volumeMounts:
+    - mountPath: /etc/kubernetes/scheduler.conf
+      name: kubeconfig
+      readOnly: true
+    - mountPath: /root/my-config-no-leaderelection.yaml
+      name: kube-scheduler-config
+      readOnly: true
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/scheduler.conf
+      type: FileOrCreate
+    name: kubeconfig
+  - hostPath:
+      path: /root/config/my-config-no-leaderelection.yaml
+      type: FileOrCreate
+    name: kube-scheduler-config
+  nodeName: k8s-master01
+  tolerations:
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"

@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"crypto/md5"
-	"fmt"
 	"k8s.io/kubernetes/pkg/schedulermain/apis"
 	"k8s.io/kubernetes/pkg/schedulermain/podschedule"
 	"log"
@@ -11,8 +10,10 @@ import (
 	"time"
 )
 
+// HeartBeatInterval 心跳间隔
 const HeartBeatInterval = 2 * time.Second
 
+// call rpc调用通用call
 func call(rpcName string, args interface{}, reply interface{}) error {
 	client, err := rpc.Dial("tcp", "localhost:12345")
 	if err != nil {
@@ -28,26 +29,30 @@ func call(rpcName string, args interface{}, reply interface{}) error {
 	return nil
 }
 
+// md5Sum32 字符串32位md5
 func md5Sum32(str string) int {
 	tmp := md5.Sum([]byte(str))
+	// md5默认64位，这里截取了前32位
 	return int((uint64(tmp[0]) | uint64(tmp[1])<<8 | uint64(tmp[2])<<16 | uint64(tmp[3])<<24 |
 		uint64(tmp[4])<<32 | uint64(tmp[5])<<40 | uint64(tmp[6])<<48 | uint64(tmp[7])<<56) & 0x7fffffffffffffff)
 }
 
-func registerScheduler() int {
+// registerScheduler 注册调度器，注册成功获得SchedulerID，失败返回-1
+func registerScheduler() (int, string) {
 	reply := apis.RegisterReply{}
 	err := call("RegisterScheduler", apis.RegisterArgs{}, &reply)
 	if err == nil {
-		fmt.Printf("scheduler registers successfully, schedulerID:%d\n", reply.SchedulerID)
-		return reply.SchedulerID
+		log.Printf("scheduler registers successfully, schedulerID:%d\n", reply.SchedulerID)
+		return reply.SchedulerID, reply.SchedulePartition
 	}
-	return -1
+	return -1, ""
 }
 
+// runSchedulerRequest 请求调度pod
 func runSchedulerRequest(podName string, namespace string, schedulerID int) (int, bool) {
 	rand.Seed(time.Now().Unix())
+	// 由podName和podNamespace计算md5得到podID，防止冲突
 	podID := md5Sum32(podName + namespace)
-	fmt.Printf("schedule pod: podName: %s, namespace: %s, podID: %d\n", podName, namespace, podID)
 	args := apis.RequestScheduleArgs{
 		SchedulerID: schedulerID,
 		PodID:       podID,
@@ -57,10 +62,12 @@ func runSchedulerRequest(podName string, namespace string, schedulerID int) (int
 	if err != nil {
 		return -1, false
 	}
-	fmt.Println("isPermitted:", reply.IsPermitted)
+	log.Printf("schedule pod: podName: %s, namespace: %s, podID: %d, isPermitted: %t\n",
+		podName, namespace, podID, reply.IsPermitted)
 	return podID, reply.IsPermitted
 }
 
+// runFinishSchedule 调度完成，更新pod状态
 func runFinishSchedule(podID int) {
 	args := apis.UpdatePodStatusArgs{
 		PodID:  podID,
@@ -73,6 +80,7 @@ func runFinishSchedule(podID int) {
 	}
 }
 
+// runHeartBeat 运行心跳
 func runHeartBeat(schedulerID int) {
 	for {
 		select {

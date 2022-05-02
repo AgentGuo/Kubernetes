@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// SchedulerLoadBalance 按照调度器权重抽取调度器，实现负载均衡
 func (p *PodSchedule) SchedulerLoadBalance(podID int64) int {
 	rand.Seed(time.Now().Unix() + podID)
 	s := rand.Float64()

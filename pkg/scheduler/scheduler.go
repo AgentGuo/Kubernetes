@@ -62,7 +62,10 @@ const (
 	durationToExpireAssumedPod = 15 * time.Minute
 )
 
-var schedulerID int
+var (
+	schedulerID        int
+	schedulerPartition string
+)
 
 // Scheduler watches for new unscheduled pods. It attempts to find
 // nodes that they fit on and writes bindings back to the api server.
@@ -294,7 +297,7 @@ func unionedGVKs(m map[framework.ClusterEvent]sets.String) map[framework.GVK]fra
 
 // Run begins watching and scheduling. It starts scheduling and blocked until the context is done.
 func (sched *Scheduler) Run(ctx context.Context) {
-	schedulerID = registerScheduler()
+	schedulerID, schedulerPartition = registerScheduler()
 	if schedulerID == -1 {
 		return
 	}
@@ -432,9 +435,15 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		return
 	}
 	pod := podInfo.Pod
-	podID, ok := runSchedulerRequest(pod.Name, pod.Namespace, schedulerID)
-	if !ok {
-		return
+	podID, isPermitted, requestCh := 0, false, make(chan struct{})
+	go func() {
+		podID, isPermitted = runSchedulerRequest(pod.Name, pod.Namespace, schedulerID)
+		requestCh <- struct{}{}
+	}()
+	if partition, ok := pod.Labels["partition"]; ok {
+		if partition != schedulerPartition {
+			return
+		}
 	}
 	fwk, err := sched.frameworkForPod(pod)
 	if err != nil {
@@ -459,7 +468,12 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 
 	schedulingCycleCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	scheduleResult, err := sched.Algorithm.Schedule(schedulingCycleCtx, sched.Extenders, fwk, state, pod)
+	var scheduleResult ScheduleResult
+	<-requestCh
+	if !isPermitted {
+		return
+	}
+	scheduleResult, err = sched.Algorithm.Schedule(schedulingCycleCtx, sched.Extenders, fwk, state, pod)
 	if err != nil {
 		// Schedule() may have failed because the pod would not fit on any host, so we try to
 		// preempt, with the expectation that the next time the pod is tried for scheduling it

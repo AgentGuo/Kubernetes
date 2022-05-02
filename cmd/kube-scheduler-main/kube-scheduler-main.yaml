@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-scheduler-main
+  namespace: kube-system
+spec:
+  containers:
+  - image: agentguo/kube-scheduler-main:1.0.2
+    imagePullPolicy: IfNotPresent
+    name: kube-scheduler
+    resources:
+      requests:
+        cpu: 100m
+      limits:
+        cpu: 2000m
+    volumeMounts:
+    - mountPath: /root/.kube/config
+      name: kubeconfig
+      readOnly: true
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  volumes:
+  - hostPath:
+      path: /root/.kube/config
+      type: FileOrCreate
+    name: kubeconfig
+  nodeName: k8s-master01
+  tolerations:
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
